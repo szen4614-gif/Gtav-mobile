@@ -48,20 +48,57 @@ jobs:
             "cmake;3.22.1"
 
 
+      - name: Extract N11 source
+        run: |
+          set -e
+
+          ZIP=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: N11 ZIP not found."
+            exit 1
+          fi
+
+          echo "ZIP encontrado:"
+          echo "$ZIP"
+
+          rm -rf _n11_extract
+
+          mkdir -p _n11_extract
+
+          unzip -q "$ZIP" -d _n11_extract
+
+          ROOT=$(find _n11_extract -mindepth 1 -maxdepth 1 -type d | head -n 1)
+
+          if [ -z "$ROOT" ]; then
+            echo "ERROR: Não foi encontrada a pasta raiz do N11."
+            exit 1
+          fi
+
+          echo "Pasta N11:"
+          echo "$ROOT"
+
+          cp -a "$ROOT"/. ./
+
+
       - name: Show project structure
         run: |
           echo "===== ROOT ====="
           ls -la
 
+          echo ""
           echo "===== N11_ANDROID ====="
           ls -la N11_ANDROID
 
+          echo ""
           echo "===== APP ====="
           ls -la N11_ANDROID/app
 
 
       - name: Validate Android project
         run: |
+          set -e
+
           test -d N11_ANDROID
           test -d N11_ANDROID/app
 
@@ -106,7 +143,6 @@ jobs:
           echo "========================================"
           echo "       N11 4.0 APK GERADO"
           echo "========================================"
-          echo ""
 
           ls -lh "$APK"
 
@@ -118,7 +154,7 @@ jobs:
             N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk
 
 
-      - name: Verify 16 KB ZIP alignment
+      - name: Verify 16 KB alignment
         run: |
           "$ANDROID_HOME/build-tools/36.0.0/zipalign" \
             -c -P 16 4 \
