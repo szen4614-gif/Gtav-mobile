@@ -1,0 +1,127 @@
+name: N11 Android Build
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "N11_ANDROID/**"
+      - "N11_MINECRAFT/**"
+      - "N11_FPS/**"
+      - "N11_INTEGRATION/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+
+    name: Build N11 4.0 APK
+
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.4.1"
+
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+
+      - name: Install Android SDK
+        run: |
+          sdkmanager --licenses < /dev/null || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.22.1"
+
+
+      - name: Check project structure
+        run: |
+          echo "Checking N11 project..."
+
+          test -d N11_ANDROID
+          test -d N11_MINECRAFT
+
+          echo "N11 project structure OK"
+
+
+      - name: Build APK
+        working-directory: N11_ANDROID
+        run: |
+          gradle :app:assembleDebug \
+            --no-daemon \
+            --stacktrace
+
+
+      - name: Run Android lint
+        working-directory: N11_ANDROID
+        run: |
+          gradle :app:lintDebug \
+            --no-daemon \
+            --stacktrace
+
+
+      - name: Verify APK
+        run: |
+          test -f N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk
+
+          echo "APK successfully generated."
+
+
+      - name: Verify APK signature
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify \
+            --verbose \
+            N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk
+
+
+      - name: Verify 16 KB alignment
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" \
+            -c -P 16 4 \
+            N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk
+
+
+      - name: Generate SHA256
+        run: |
+          sha256sum \
+            N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk \
+            > N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk.sha256
+
+          cat N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk.sha256
+
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: N11-4.0-debug-APK
+          path: |
+            N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk
+            N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk.sha256
+          if-no-files-found: error
