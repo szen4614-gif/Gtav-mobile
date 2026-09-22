@@ -30,11 +30,13 @@ jobs:
           java-version: "17"
 
 
-      - name: Install Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ""
 
 
-      - name: Install Android components
+      - name: Install Android SDK components
         run: |
           yes | sdkmanager --licenses || true
 
@@ -46,15 +48,15 @@ jobs:
             "cmake;3.22.1"
 
 
-      - name: Show project
+      - name: Show project structure
         run: |
-          echo "=== ROOT ==="
+          echo "===== ROOT ====="
           ls -la
 
-          echo "=== N11_ANDROID ==="
+          echo "===== N11_ANDROID ====="
           ls -la N11_ANDROID
 
-          echo "=== APP ==="
+          echo "===== APP ====="
           ls -la N11_ANDROID/app
 
 
@@ -66,10 +68,10 @@ jobs:
           test -f N11_ANDROID/settings.gradle.kts
           test -f N11_ANDROID/build.gradle.kts
 
-          echo "Android project structure OK"
+          echo "N11 Android project structure: OK"
 
 
-      - name: Install Gradle
+      - name: Install Gradle 9.4.1
         run: |
           wget -q \
             https://services.gradle.org/distributions/gradle-9.4.1-bin.zip \
@@ -80,12 +82,13 @@ jobs:
           echo "/opt/gradle-9.4.1/bin" >> "$GITHUB_PATH"
 
 
-      - name: Check Gradle
+      - name: Check Java and Gradle
         run: |
+          java -version
           gradle --version
 
 
-      - name: Build N11 APK
+      - name: Build N11 Debug APK
         working-directory: N11_ANDROID
         run: |
           gradle :app:assembleDebug \
@@ -93,17 +96,19 @@ jobs:
             --stacktrace
 
 
-      - name: Check APK
+      - name: Verify APK
         run: |
-          test -f \
-            N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk
+          APK="N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk"
 
-          echo "================================"
-          echo "N11 APK GERADO COM SUCESSO"
-          echo "================================"
+          test -f "$APK"
 
-          ls -lh \
-            N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk
+          echo ""
+          echo "========================================"
+          echo "       N11 4.0 APK GERADO"
+          echo "========================================"
+          echo ""
+
+          ls -lh "$APK"
 
 
       - name: Verify APK signature
@@ -113,7 +118,7 @@ jobs:
             N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk
 
 
-      - name: Verify 16 KB alignment
+      - name: Verify 16 KB ZIP alignment
         run: |
           "$ANDROID_HOME/build-tools/36.0.0/zipalign" \
             -c -P 16 4 \
@@ -122,15 +127,13 @@ jobs:
 
       - name: Generate SHA256
         run: |
-          sha256sum \
-            N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk \
-            > N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk.sha256
+          APK="N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk"
 
-          cat \
-            N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk.sha256
+          sha256sum "$APK" \
+            | tee "${APK}.sha256"
 
 
-      - name: Upload APK
+      - name: Upload N11 APK
         uses: actions/upload-artifact@v4
         with:
           name: N11-4.0-debug-APK
