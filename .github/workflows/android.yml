@@ -1,4 +1,4 @@
-name: N11 Android Build
+name: N11 Launcher 7 — Master CI/CD
 
 on:
   workflow_dispatch:
@@ -8,172 +8,401 @@ on:
       - main
       - master
 
+  pull_request:
+    branches:
+      - main
+      - master
+
 permissions:
   contents: read
 
-jobs:
-  build:
+concurrency:
+  group: n11-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
-    name: Build N11 4.0 APK
+env:
+  JAVA_VERSION: "17"
+  GRADLE_VERSION: "9.4.1"
+  ANDROID_API: "36"
+  BUILD_TOOLS: "36.0.0"
+  NDK_VERSION: "28.2.13676358"
+  CMAKE_VERSION: "3.22.1"
+
+jobs:
+
+  # ============================================================
+  # 1. VALIDATE SOURCE
+  # ============================================================
+
+  validate:
+    name: Validate N11 Source
     runs-on: ubuntu-24.04
 
     steps:
-
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Install Java 17
+      - name: Validate project structure
+        run: |
+          python3 scripts/validate_structure.py
+
+      - name: Check required directories
+        run: |
+          test -d N11_ANDROID
+          test -d N11_CORE
+          test -d N11_MINECRAFT
+          test -d N11_RUNTIME
+          test -d N11_PERFORMANCE
+          test -d N11_DIAGNOSTICS
+          test -d N11_NATIVE
+          test -d N11_RENDER
+          test -d N11_INPUT
+          test -d N11_AUDIO
+          test -d N11_MODS
+          test -d N11_PLUGIN
+          test -d N11_STORAGE
+
+      - name: Check configuration JSON
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          files = [
+              Path("config/n11/instance.example.json"),
+              Path("config/n11/plugin.example.json"),
+              Path("config/n11/runtime-manifest.example.json"),
+          ]
+
+          for f in files:
+              json.loads(f.read_text())
+              print("OK:", f)
+          PY
+
+
+  # ============================================================
+  # 2. BUILD DEBUG
+  # ============================================================
+
+  debug:
+    name: Build Debug APK
+    runs-on: ubuntu-24.04
+    needs: validate
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: ${{ env.JAVA_VERSION }}
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          packages: ""
+        uses: android-actions/setup-android@v3
 
-
-      - name: Install Android SDK components
+      - name: Install Android dependencies
         run: |
           yes | sdkmanager --licenses || true
 
           sdkmanager \
             "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0" \
-            "ndk;28.2.13676358" \
-            "cmake;3.22.1"
+            "platforms;android-${ANDROID_API}" \
+            "build-tools;${BUILD_TOOLS}" \
+            "ndk;${NDK_VERSION}" \
+            "cmake;${CMAKE_VERSION}"
 
-
-      - name: Extract N11 source
+      - name: Validate project
         run: |
-          set -e
+          python3 scripts/validate_structure.py
 
-          ZIP=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
-
-          if [ -z "$ZIP" ]; then
-            echo "ERROR: N11 ZIP not found."
-            exit 1
-          fi
-
-          echo "ZIP encontrado:"
-          echo "$ZIP"
-
-          rm -rf _n11_extract
-
-          mkdir -p _n11_extract
-
-          unzip -q "$ZIP" -d _n11_extract
-
-          ROOT=$(find _n11_extract -mindepth 1 -maxdepth 1 -type d | head -n 1)
-
-          if [ -z "$ROOT" ]; then
-            echo "ERROR: Não foi encontrada a pasta raiz do N11."
-            exit 1
-          fi
-
-          echo "Pasta N11:"
-          echo "$ROOT"
-
-          cp -a "$ROOT"/. ./
-
-
-      - name: Show project structure
-        run: |
-          echo "===== ROOT ====="
-          ls -la
-
-          echo ""
-          echo "===== N11_ANDROID ====="
-          ls -la N11_ANDROID
-
-          echo ""
-          echo "===== APP ====="
-          ls -la N11_ANDROID/app
-
-
-      - name: Validate Android project
-        run: |
-          set -e
-
-          test -d N11_ANDROID
-          test -d N11_ANDROID/app
-
-          test -f N11_ANDROID/settings.gradle.kts
-          test -f N11_ANDROID/build.gradle.kts
-
-          echo "N11 Android project structure: OK"
-
-
-      - name: Install Gradle 9.4.1
-        run: |
-          wget -q \
-            https://services.gradle.org/distributions/gradle-9.4.1-bin.zip \
-            -O /tmp/gradle.zip
-
-          unzip -q /tmp/gradle.zip -d /opt
-
-          echo "/opt/gradle-9.4.1/bin" >> "$GITHUB_PATH"
-
-
-      - name: Check Java and Gradle
-        run: |
-          java -version
-          gradle --version
-
-
-      - name: Build N11 Debug APK
+      - name: Build Debug APK
         working-directory: N11_ANDROID
         run: |
           gradle :app:assembleDebug \
             --no-daemon \
             --stacktrace
 
-
-      - name: Verify APK
+      - name: Run Debug Lint
+        working-directory: N11_ANDROID
         run: |
-          APK="N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk"
+          gradle :app:lintDebug \
+            --no-daemon \
+            --stacktrace
 
-          test -f "$APK"
-
-          echo ""
-          echo "========================================"
-          echo "       N11 4.0 APK GERADO"
-          echo "========================================"
-
-          ls -lh "$APK"
-
+      - name: Verify APK exists
+        run: |
+          test -f \
+            N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Verify APK signature
         run: |
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify \
+          "$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner" \
+            verify \
             --verbose \
             N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk
 
-
-      - name: Verify 16 KB alignment
+      - name: Verify 16 KB ZIP alignment
         run: |
-          "$ANDROID_HOME/build-tools/36.0.0/zipalign" \
-            -c -P 16 4 \
+          "$ANDROID_HOME/build-tools/${BUILD_TOOLS}/zipalign" \
+            -c \
+            -P 16 \
+            4 \
             N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk
 
-
-      - name: Generate SHA256
+      - name: Generate Debug SHA256
         run: |
-          APK="N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk"
+          sha256sum \
+            N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk \
+            | tee \
+            N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk.sha256
 
-          sha256sum "$APK" \
-            | tee "${APK}.sha256"
-
-
-      - name: Upload N11 APK
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: N11-4.0-debug-APK
+          name: N11-Launcher-7-Debug
+          if-no-files-found: error
           path: |
             N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk
             N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk.sha256
+
+
+  # ============================================================
+  # 3. NATIVE / ELF AUDIT
+  # ============================================================
+
+  native-audit:
+    name: Native ARM64 + ELF Audit
+    runs-on: ubuntu-24.04
+    needs: debug
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: |
+          yes | sdkmanager --licenses || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-${ANDROID_API}" \
+            "build-tools;${BUILD_TOOLS}" \
+            "ndk;${NDK_VERSION}" \
+            "cmake;${CMAKE_VERSION}"
+
+      - name: Build native code
+        working-directory: N11_ANDROID
+        run: |
+          gradle :app:assembleDebug \
+            --no-daemon \
+            --stacktrace
+
+      - name: Inspect APK native libraries
+        run: |
+          APK="N11_ANDROID/app/build/outputs/apk/debug/app-debug.apk"
+
+          mkdir -p native-audit
+
+          unzip -q "$APK" \
+            "lib/*" \
+            -d native-audit
+
+          echo "=== Native libraries ==="
+
+          find native-audit \
+            -type f \
+            -name "*.so" \
+            -print
+
+      - name: Check ARM64 libraries
+        run: |
+          if find native-audit -type f -name "*.so" | grep -q .; then
+            echo "Native libraries found."
+
+            find native-audit \
+              -type f \
+              -name "*.so" \
+              -exec file {} \;
+          else
+            echo "No native .so files found."
+          fi
+
+      - name: Check ELF page alignment
+        run: |
+          if find native-audit -type f -name "*.so" | grep -q .; then
+
+            FAILED=0
+
+            while IFS= read -r LIB; do
+
+              echo ""
+              echo "================================"
+              echo "Checking: $LIB"
+              echo "================================"
+
+              if command -v llvm-readelf >/dev/null 2>&1; then
+                llvm-readelf -l "$LIB" || FAILED=1
+              elif command -v readelf >/dev/null 2>&1; then
+                readelf -l "$LIB" || FAILED=1
+              fi
+
+            done < <(
+              find native-audit \
+                -type f \
+                -name "*.so"
+            )
+
+            exit "$FAILED"
+
+          else
+            echo "No native libraries to inspect."
+          fi
+
+
+  # ============================================================
+  # 4. RELEASE BUILD
+  # ============================================================
+
+  release:
+    name: Build Release APK
+    runs-on: ubuntu-24.04
+    needs:
+      - validate
+      - native-audit
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android dependencies
+        run: |
+          yes | sdkmanager --licenses || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-${ANDROID_API}" \
+            "build-tools;${BUILD_TOOLS}" \
+            "ndk;${NDK_VERSION}" \
+            "cmake;${CMAKE_VERSION}"
+
+      - name: Build Release
+        working-directory: N11_ANDROID
+        run: |
+          gradle :app:assembleRelease \
+            --no-daemon \
+            --stacktrace
+
+      - name: Verify Release APK
+        run: |
+          APK="N11_ANDROID/app/build/outputs/apk/release/app-release.apk"
+
+          test -f "$APK"
+
+      - name: Verify Release alignment
+        run: |
+          "$ANDROID_HOME/build-tools/${BUILD_TOOLS}/zipalign" \
+            -c \
+            -P 16 \
+            4 \
+            N11_ANDROID/app/build/outputs/apk/release/app-release.apk
+
+      - name: Generate Release SHA256
+        run: |
+          sha256sum \
+            N11_ANDROID/app/build/outputs/apk/release/app-release.apk \
+            | tee \
+            N11_ANDROID/app/build/outputs/apk/release/app-release.apk.sha256
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: N11-Launcher-7-Release
           if-no-files-found: error
+          path: |
+            N11_ANDROID/app/build/outputs/apk/release/app-release.apk
+            N11_ANDROID/app/build/outputs/apk/release/app-release.apk.sha256
+
+
+  # ============================================================
+  # 5. SOURCE PACKAGE
+  # ============================================================
+
+  source-package:
+    name: Package N11 Source
+    runs-on: ubuntu-24.04
+    needs:
+      - validate
+      - debug
+      - native-audit
+      - release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create source archive
+        run: |
+          mkdir -p release
+
+          zip -r \
+            release/N11_LAUNCHER_7_SOURCE.zip \
+            . \
+            -x ".git/*" \
+            -x "N11_ANDROID/app/build/*" \
+            -x "*.gradle-cache*"
+
+      - name: Generate source SHA256
+        run: |
+          sha256sum \
+            release/N11_LAUNCHER_7_SOURCE.zip \
+            | tee \
+            release/N11_LAUNCHER_7_SOURCE.zip.sha256
+
+      - name: Upload source package
+        uses: actions/upload-artifact@v4
+        with:
+          name: N11-Launcher-7-Source
+          if-no-files-found: error
+          path: |
+            release/N11_LAUNCHER_7_SOURCE.zip
+            release/N11_LAUNCHER_7_SOURCE.zip.sha256
